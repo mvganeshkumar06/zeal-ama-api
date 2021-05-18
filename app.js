@@ -7,6 +7,7 @@ const sessionRoutes = require("./routes/sessions");
 const app = express();
 const port = process.env.PORT;
 const server = require("http").Server(app);
+const { RTCPeerConnection, RTCSessionDescription } = require("wrtc");
 const io = require("socket.io")(server, {
 	cors: {
 		origin: "*",
@@ -20,6 +21,19 @@ connectToDatabase();
 app.use("/session", sessionRoutes);
 
 let SESSION_ID;
+let HOST_STREAM, PEER_TO_HOST, PEER_TO_USER;
+
+// Peer connection config
+const peerConfig = {
+	iceServers: [
+		{
+			urls: [
+				"stun:stun1.l.google.com:19302",
+				"stun:stun2.l.google.com:19302",
+			],
+		},
+	],
+};
 
 io.on("connection", (socket) => {
 	// When host joins the session
@@ -43,106 +57,149 @@ io.on("connection", (socket) => {
 		}
 	);
 
-	// When offer is made by the host
-	socket.on("offer", async (offer, sessionId, userSocketId) => {
+	// When host makes the offer
+	socket.on("host-offer", async (offer, hostSocketId, answerCallback) => {
 		console.log("Received offer from host");
 		try {
-			// // Save host offer to the DB
-			// const session = await sessions.findOne({ id: sessionId });
-			// session.host.offer = offer;
-			// await session.save();
+			// Create a peer connection for the server
+			const peer = new RTCPeerConnection(peerConfig);
 
-			io.to(userSocketId).emit("offer-from-host", offer);
+			PEER_TO_HOST = peer;
+
+			// Set the incoming offer as remote description of the peer
+			peer.setRemoteDescription(new RTCSessionDescription(offer));
+
+			// Listen for tracks added by host and store it in HOST_STREAM
+			peer.ontrack = (event) => {
+				HOST_STREAM = event.streams[0];
+			};
+
+			// Create an answer
+			const answer = await peer.createAnswer();
+
+			// Set the answer as local description of the peer
+			peer.setLocalDescription(answer);
+
+			// Send the answer back to the host
+			answerCallback(answer);
+			console.log("Sent answer to host");
+
+			// Listen to server ICE candidate and send it to the host
+			peer.addEventListener("icecandidate", (event) => {
+				if (event.candidate) {
+					console.log("Sent ICE candidate");
+					io.to(hostSocketId).emit(
+						"server-ice-candidate",
+						event.candidate
+					);
+				}
+			});
 		} catch (error) {
 			console.log(error);
 		}
 	});
 
-	// When host sends ice candidate
-	socket.on(
-		"host-ice-candidate",
-		async (iceCandidate, sessionId, userSocketId) => {
-			console.log("Received ICE candidate from host");
-			// Update the host ice candidate in the DB
+	// When host sends ICE candidate
+	socket.on("host-ice-candidate", async (iceCandidate) => {
+		if (iceCandidate) {
 			try {
-				// const session = await sessions.findOne({ id: sessionId });
-				// session.host.iceCandidate = iceCandidate;
-				// await session.save();
+				console.log("Received ICE candidate from host");
+				await PEER_TO_HOST.addIceCandidate(iceCandidate);
+			} catch (error) {
+				console.error("Error adding received ice candidate", error);
+			}
+		}
+	});
 
-				io.to(userSocketId).emit(
-					"ice-candidate-from-host",
-					iceCandidate
+	// When user makes the offer
+	socket.on("user-offer", async (offer, userSocketId, answerCallback) => {
+		console.log("Received offer from user");
+		try {
+			// Create a peer connection for the server
+			const peer = new RTCPeerConnection(peerConfig);
+
+			PEER_TO_USER = peer;
+
+			// Set the incoming offer as remote description of the peer
+			peer.setRemoteDescription(new RTCSessionDescription(offer));
+
+			// Add the tracks from HOST_STREAM to the peer
+			HOST_STREAM.getTracks().forEach((track) => {
+				peer.addTrack(track, HOST_STREAM);
+			});
+
+			// Create an answer
+			const answer = await peer.createAnswer();
+
+			// Set the answer as local description of the peer
+			peer.setLocalDescription(answer);
+
+			// Send the answer back to the host
+			answerCallback(answer);
+			console.log("Sent answer to user");
+
+			// Listen to server ICE candidate and send it to the user
+			peer.addEventListener("icecandidate", (event) => {
+				if (event.candidate) {
+					console.log("Sent ICE candidate");
+					io.to(userSocketId).emit(
+						"server-ice-candidate",
+						event.candidate
+					);
+				}
+			});
+		} catch (error) {
+			console.log(error);
+		}
+	});
+
+	// When user sends ICE candidate
+	socket.on("user-ice-candidate", async (iceCandidate) => {
+		if (iceCandidate) {
+			try {
+				console.log("Received ICE candidate from user");
+				await PEER_TO_USER.addIceCandidate(iceCandidate);
+			} catch (error) {
+				console.error("Error adding received ice candidate", error);
+			}
+		}
+	});
+
+	// When user joins the session
+	socket.on(
+		"user-join-session",
+		async (sessionId, userSocketId, userName) => {
+			try {
+				// Add the user to the database if not existing
+				const session = await sessions.findOne({ id: sessionId });
+				const user = session.users.find(
+					(user) => user.userName === userName
+				);
+
+				if (!user) {
+					session.users.push({
+						socketId: userSocketId,
+						userName: userName,
+					});
+					await session.save();
+				}
+
+				// Make the user join the session
+				socket.join(sessionId);
+
+				console.log(`User ${userName} joined the session`);
+
+				// Emit to everyone in the session that a user has joined except for the user
+				socket.broadcast.emit(
+					"user-joined-session",
+					session.users,
+					userSocketId
 				);
 			} catch (error) {
 				console.log(error);
 			}
 		}
 	);
-
-	// When user joins a session
-	socket.on("join-session", async (sessionId, userSocketId, userName) => {
-		try {
-			// Add the user to the database if not existing
-			const session = await sessions.findOne({ id: sessionId });
-			const user = session.users.find(
-				(user) => user.userName === userName
-			);
-
-			if (!user) {
-				session.users.push({
-					socketId: userSocketId,
-					userName: userName,
-				});
-				await session.save();
-			}
-
-			// Make the user join the session
-			socket.join(sessionId);
-
-			console.log(`User ${userName} joined the session`);
-
-			// Emit to everyone in the session that a user has joined except for the user
-			socket.broadcast.emit(
-				"user-joined-session",
-				session.users,
-				userSocketId
-			);
-		} catch (error) {
-			console.log(error);
-		}
-	});
-
-	// When answer is made by the user
-	socket.on("answer", async (answer, sessionId) => {
-		console.log("Received answer from user");
-		try {
-			// // Get the host socket id from DB
-			// const session = await sessions.findOne({ id: sessionId });
-			// const hostSocketId = session.host.socketId;
-			// Send the answer to the host
-			// Here io.to(hostSocketId).emit() is not working
-			// A workaround is the broadcast but listen only by host
-			socket.broadcast.emit("answer-from-user", answer);
-		} catch (error) {
-			console.log(error);
-		}
-	});
-
-	// When user sends ice candidate
-	socket.on("user-ice-candidate", async (iceCandidate, sessionId) => {
-		console.log("Received ICE candidate from user");
-		try {
-			// // Get host socket Id from DB
-			// const session = await sessions.findOne({ id: sessionId });
-			// const hostSocketId = session.host.socketId;
-			// Send the user ICE candidate to the host
-			// Here io.to(hostSocketId).emit() is not working
-			// A workaround is the broadcast but listen only by host
-			socket.broadcast.emit("ice-candidate-from-user", iceCandidate);
-		} catch (error) {
-			console.log(error);
-		}
-	});
 
 	// Indicate that a user has left the session
 	socket.on("leave-session", async (userSocketId) => {
