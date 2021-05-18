@@ -40,6 +40,7 @@ io.on("connection", (socket) => {
 	socket.on(
 		"host-join-session",
 		async (sessionId, hostSocketId, hostName) => {
+			// Store the session id
 			SESSION_ID = sessionId;
 
 			// Make the host join the session
@@ -64,12 +65,13 @@ io.on("connection", (socket) => {
 			// Create a peer connection for the server
 			const peer = new RTCPeerConnection(peerConfig);
 
+			// Store the peer to host
 			PEER_TO_HOST = peer;
 
 			// Set the incoming offer as remote description of the peer
 			peer.setRemoteDescription(new RTCSessionDescription(offer));
 
-			// Listen for tracks added by host and store it in HOST_STREAM
+			// Listen for tracks added by host and store it
 			peer.ontrack = (event) => {
 				HOST_STREAM = event.streams[0];
 			};
@@ -85,7 +87,7 @@ io.on("connection", (socket) => {
 			console.log("Sent answer to host");
 
 			// Listen to server ICE candidate and send it to the host
-			peer.addEventListener("icecandidate", (event) => {
+			peer.onicecandidate = (event) => {
 				if (event.candidate) {
 					console.log("Sent ICE candidate");
 					io.to(hostSocketId).emit(
@@ -93,7 +95,7 @@ io.on("connection", (socket) => {
 						event.candidate
 					);
 				}
-			});
+			};
 		} catch (error) {
 			console.log(error);
 		}
@@ -111,6 +113,35 @@ io.on("connection", (socket) => {
 		}
 	});
 
+	// When a user joins the session
+	socket.on("join-session", async (sessionId, userSocketId, userName) => {
+		try {
+			// Add the user to the database if not existing
+			const session = await sessions.findOne({ id: sessionId });
+			const user = session.users.find(
+				(user) => user.userName === userName
+			);
+
+			if (!user) {
+				session.users.push({
+					socketId: userSocketId,
+					userName: userName,
+				});
+				await session.save();
+			}
+
+			// Make the user join the session
+			socket.join(sessionId);
+
+			console.log(`User ${userName} joined the session`);
+
+			// Indicate to everyone in the session that a user has joined except for the user
+			socket.broadcast.emit("user-joined-session", session.users);
+		} catch (error) {
+			console.log(error);
+		}
+	});
+
 	// When user makes the offer
 	socket.on("user-offer", async (offer, userSocketId, answerCallback) => {
 		console.log("Received offer from user");
@@ -118,6 +149,7 @@ io.on("connection", (socket) => {
 			// Create a peer connection for the server
 			const peer = new RTCPeerConnection(peerConfig);
 
+			// Store the peer to user
 			PEER_TO_USER = peer;
 
 			// Set the incoming offer as remote description of the peer
@@ -134,12 +166,12 @@ io.on("connection", (socket) => {
 			// Set the answer as local description of the peer
 			peer.setLocalDescription(answer);
 
-			// Send the answer back to the host
+			// Send the answer back to the user
 			answerCallback(answer);
 			console.log("Sent answer to user");
 
 			// Listen to server ICE candidate and send it to the user
-			peer.addEventListener("icecandidate", (event) => {
+			peer.onicecandidate = (event) => {
 				if (event.candidate) {
 					console.log("Sent ICE candidate");
 					io.to(userSocketId).emit(
@@ -147,7 +179,7 @@ io.on("connection", (socket) => {
 						event.candidate
 					);
 				}
-			});
+			};
 		} catch (error) {
 			console.log(error);
 		}
@@ -165,43 +197,7 @@ io.on("connection", (socket) => {
 		}
 	});
 
-	// When user joins the session
-	socket.on(
-		"user-join-session",
-		async (sessionId, userSocketId, userName) => {
-			try {
-				// Add the user to the database if not existing
-				const session = await sessions.findOne({ id: sessionId });
-				const user = session.users.find(
-					(user) => user.userName === userName
-				);
-
-				if (!user) {
-					session.users.push({
-						socketId: userSocketId,
-						userName: userName,
-					});
-					await session.save();
-				}
-
-				// Make the user join the session
-				socket.join(sessionId);
-
-				console.log(`User ${userName} joined the session`);
-
-				// Emit to everyone in the session that a user has joined except for the user
-				socket.broadcast.emit(
-					"user-joined-session",
-					session.users,
-					userSocketId
-				);
-			} catch (error) {
-				console.log(error);
-			}
-		}
-	);
-
-	// Indicate that a user has left the session
+	// When a user leaves the session
 	socket.on("leave-session", async (userSocketId) => {
 		try {
 			// Remove the user from the database if existing
