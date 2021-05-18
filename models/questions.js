@@ -12,7 +12,7 @@ const questionSchema = Schema({
 	},
 	upvotes: {
 		type: Number,
-		required: [true, "Upvotes field is required"],
+		default: 0,
 	},
 	tags: [
 		{

@@ -18,12 +18,6 @@ const sessionSchema = Schema({
 			type: String,
 			required: [true, "Host name field is required"],
 		},
-		offer: {
-			type: Object,
-		},
-		iceCandidate: {
-			type: Object,
-		},
 	},
 	users: [
 		{
