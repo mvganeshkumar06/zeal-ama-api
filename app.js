@@ -118,14 +118,12 @@ io.on("connection", (socket) => {
 		try {
 			// Add the user to the database if not existing
 			const session = await sessions.findOne({ id: sessionId });
-			const user = session.users.find(
-				(user) => user.userName === userName
-			);
+			const user = session.users.find((user) => user.name === userName);
 
 			if (!user) {
 				session.users.push({
 					socketId: userSocketId,
-					userName: userName,
+					name: userName,
 				});
 				await session.save();
 			}
