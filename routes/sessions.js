@@ -6,12 +6,17 @@ router.get("/:sessionId", async (req, res) => {
 	try {
 		const { sessionId } = req.params;
 		const session = await sessions.findOne({ id: sessionId });
-		const normalizedSession = {
-			id: session.id,
-			name: session.name,
-			host: session.host.name,
-		};
-		res.json(normalizedSession);
+		res.json(session);
+	} catch (error) {
+		res.status(500).json({ errorMessage: error });
+	}
+});
+
+router.get("/:sessionId/chat", async (req, res) => {
+	try {
+		const { sessionId } = req.params;
+		const session = await sessions.findOne({ id: sessionId });
+		res.json(session.chats);
 	} catch (error) {
 		res.status(500).json({ errorMessage: error });
 	}
