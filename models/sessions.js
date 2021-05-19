@@ -24,7 +24,17 @@ const sessionSchema = Schema({
 			socketId: {
 				type: String,
 			},
+			name: {
+				type: String,
+			},
+		},
+	],
+	chats: [
+		{
 			userName: {
+				type: String,
+			},
+			message: {
 				type: String,
 			},
 		},
