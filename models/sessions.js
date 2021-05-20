@@ -39,6 +39,32 @@ const sessionSchema = Schema({
 			},
 		},
 	],
+	questions: [
+		{
+			title: {
+				type: String,
+			},
+			creator: {
+				type: String,
+			},
+			upvotes: {
+				count: {
+					type: Number,
+					default: 0,
+				},
+				users: [{ type: String }],
+			},
+			tags: [
+				{
+					type: String,
+				},
+			],
+			isAnswered: {
+				type: Boolean,
+				default: false,
+			},
+		},
+	],
 });
 
 const sessions = model("sessions", sessionSchema);
