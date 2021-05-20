@@ -36,31 +36,20 @@ const peerConfig = {
 };
 
 io.on("connection", (socket) => {
-	// When host joins the session
-	socket.on(
-		"host-join-session",
-		async (sessionId, hostSocketId, hostName) => {
-			// Store the session id
-			SESSION_ID = sessionId;
-
-			// Make the host join the session
-			socket.join(sessionId);
-
-			console.log(`Host ${hostName} joined the session`);
-			// Save host socket Id to the DB
-			try {
-				const session = await sessions.findOne({ id: sessionId });
-				session.host.socketId = hostSocketId;
-				await session.save();
-			} catch (error) {
-				console.log(error);
-			}
+	socket.on("host-join-session", async (sessionId, hostSocketId) => {
+		SESSION_ID = sessionId;
+		socket.join(sessionId);
+		try {
+			const session = await sessions.findOne({ id: sessionId });
+			session.host.socketId = hostSocketId;
+			await session.save();
+		} catch (error) {
+			console.log(error);
 		}
-	);
+	});
 
 	// When host makes the offer
 	socket.on("host-offer", async (offer, hostSocketId, answerCallback) => {
-		console.log("Received offer from host");
 		try {
 			// Create a peer connection for the server
 			const peer = new RTCPeerConnection(peerConfig);
@@ -84,12 +73,10 @@ io.on("connection", (socket) => {
 
 			// Send the answer back to the host
 			answerCallback(answer);
-			console.log("Sent answer to host");
 
 			// Listen to server ICE candidate and send it to the host
 			peer.onicecandidate = (event) => {
 				if (event.candidate) {
-					console.log("Sent ICE candidate");
 					io.to(hostSocketId).emit(
 						"server-ice-candidate",
 						event.candidate
@@ -105,7 +92,6 @@ io.on("connection", (socket) => {
 	socket.on("host-ice-candidate", async (iceCandidate) => {
 		if (iceCandidate) {
 			try {
-				console.log("Received ICE candidate from host");
 				await PEER_TO_HOST.addIceCandidate(iceCandidate);
 			} catch (error) {
 				console.error("Error adding received ice candidate", error);
@@ -113,10 +99,8 @@ io.on("connection", (socket) => {
 		}
 	});
 
-	// When a user joins the session
 	socket.on("join-session", async (sessionId, userSocketId, userName) => {
 		try {
-			// Add the user to the database if not existing
 			const session = await sessions.findOne({ id: sessionId });
 			const user = session.users.find((user) => user.name === userName);
 
@@ -128,12 +112,8 @@ io.on("connection", (socket) => {
 				await session.save();
 			}
 
-			// Make the user join the session
 			socket.join(sessionId);
 
-			console.log(`User ${userName} joined the session`);
-
-			// Indicate to everyone in the session that a user has joined except for the user
 			socket.broadcast.emit("user-joined-session", session.users);
 		} catch (error) {
 			console.log(error);
@@ -142,7 +122,6 @@ io.on("connection", (socket) => {
 
 	// When user makes the offer
 	socket.on("user-offer", async (offer, userSocketId, answerCallback) => {
-		console.log("Received offer from user");
 		try {
 			// Create a peer connection for the server
 			const peer = new RTCPeerConnection(peerConfig);
@@ -166,12 +145,10 @@ io.on("connection", (socket) => {
 
 			// Send the answer back to the user
 			answerCallback(answer);
-			console.log("Sent answer to user");
 
 			// Listen to server ICE candidate and send it to the user
 			peer.onicecandidate = (event) => {
 				if (event.candidate) {
-					console.log("Sent ICE candidate");
 					io.to(userSocketId).emit(
 						"server-ice-candidate",
 						event.candidate
@@ -187,7 +164,6 @@ io.on("connection", (socket) => {
 	socket.on("user-ice-candidate", async (iceCandidate) => {
 		if (iceCandidate) {
 			try {
-				console.log("Received ICE candidate from user");
 				await PEER_TO_USER.addIceCandidate(iceCandidate);
 			} catch (error) {
 				console.error("Error adding received ice candidate", error);
@@ -195,10 +171,92 @@ io.on("connection", (socket) => {
 		}
 	});
 
-	// When a user leaves the session
+	socket.on("chat-message", async (userName, message) => {
+		try {
+			const session = await sessions.findOne({ id: SESSION_ID });
+			session.chats.push({
+				userName: userName,
+				message: message,
+			});
+			await session.save();
+			io.emit("chat-update", session.chats);
+		} catch (error) {
+			console.log(error);
+		}
+	});
+
+	socket.on("question", async (userName, question) => {
+		try {
+			const session = await sessions.findOne({ id: SESSION_ID });
+			session.questions.push({
+				creator: userName,
+				title: question,
+			});
+			await session.save();
+			io.emit("question-update", session.questions);
+		} catch (error) {
+			console.log(error);
+		}
+	});
+
+	socket.on("question-upvote", async (userName, questionId) => {
+		try {
+			const session = await sessions.findOne({ id: SESSION_ID });
+			const questions = await session.questions;
+			const question = questions.find(
+				(question) => question._id.toString() === questionId
+			);
+			question.upvotes.count += 1;
+			question.upvotes.users.push(userName);
+			const updatedQuestions = questions.filter(
+				(question) => question._id.toString() !== questionId
+			);
+			updatedQuestions.push(question);
+			session.questions = updatedQuestions;
+			await session.save();
+			io.emit("question-update", session.questions);
+		} catch (error) {
+			console.log(error);
+		}
+	});
+
+	socket.on("question-answered", async (questionId, isAnswered) => {
+		try {
+			const session = await sessions.findOne({ id: SESSION_ID });
+			const questions = await session.questions;
+			const question = questions.find(
+				(question) => question._id.toString() === questionId
+			);
+			question.isAnswered = isAnswered;
+			const updatedQuestions = questions.filter(
+				(question) => question._id.toString() !== questionId
+			);
+			updatedQuestions.push(question);
+			session.questions = updatedQuestions;
+			await session.save();
+			io.emit("question-update", session.questions);
+		} catch (error) {
+			console.log(error);
+		}
+	});
+
+	socket.on("question-spam", async (questionId) => {
+		try {
+			const session = await sessions.findOne({ id: SESSION_ID });
+			const questions = await session.questions;
+			const updatedQuestions = questions.filter(
+				(question) => question._id.toString() !== questionId
+			);
+			session.questions = updatedQuestions;
+			await session.save();
+			io.emit("question-update", session.questions);
+		} catch (error) {
+			console.log(error);
+		}
+	});
+
 	socket.on("leave-session", async (userSocketId) => {
 		try {
-			// Remove the user from the database if existing
 			const session = await sessions.findOne({ id: SESSION_ID });
 			const user = session.users.find(
 				(user) => user.socketId === userSocketId
@@ -208,7 +266,6 @@ io.on("connection", (socket) => {
 					(user) => user.socketId !== userSocketId
 				);
 				await session.save();
-				// Indicate to everyone in the session that the user has left
 				socket.broadcast.emit("user-left-session", session.users);
 			}
 		} catch (error) {
@@ -216,13 +273,9 @@ io.on("connection", (socket) => {
 		}
 	});
 
-	// When the session is ended
 	socket.on("end-session", async (sessionId) => {
 		try {
-			// Disconnect the users
 			socket.broadcast.emit("disconnect-user");
-
-			// Delete the session details from DB
 			await sessions.deleteOne({ id: sessionId });
 		} catch (error) {
 			console.log(error);
