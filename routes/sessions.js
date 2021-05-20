@@ -2,24 +2,27 @@ const express = require("express");
 const router = express.Router();
 const sessions = require("../models/sessions");
 
-router.get("/:sessionId", async (req, res) => {
+router.use("/:sessionId", async (req, res, next) => {
 	try {
 		const { sessionId } = req.params;
 		const session = await sessions.findOne({ id: sessionId });
-		res.json(session);
+		req.session = session;
+		next();
 	} catch (error) {
 		res.status(500).json({ errorMessage: error });
 	}
 });
 
-router.get("/:sessionId/chat", async (req, res) => {
-	try {
-		const { sessionId } = req.params;
-		const session = await sessions.findOne({ id: sessionId });
-		res.json(session.chats);
-	} catch (error) {
-		res.status(500).json({ errorMessage: error });
-	}
+router.get("/:sessionId", (req, res) => {
+	res.json(req.session);
+});
+
+router.get("/:sessionId/chat", (req, res) => {
+	res.json(req.session.chats);
+});
+
+router.get("/:sessionId/question", (req, res) => {
+	res.json(req.session.questions);
 });
 
 router.post("/", async (req, res) => {
